@@ -1,0 +1,37 @@
+name_given,名
+name_family,姓
+name_print,表示名
+-,ニックネーム
+email_1,メールアドレス
+email_2,別のメールアドレス
+-,スクリーンネーム
+tel_work,勤務先の電話番号
+tel_home,自宅の電話番号
+tel_fax,FAX 番号
+-,ポケットベル番号
+tel_mobile,携帯電話番号
+addr_street_1,番地 (自宅)
+addr_street_2,番地 (自宅) 2
+addr_city,市区町村 (自宅)
+addr_pref,都道府県 (自宅)
+addr_zip,郵便番号 (自宅)
+addr_country,国 (自宅)
+-,番地 (勤務先)
+-,番地 (勤務先) 2
+-,市区町村 (勤務先)
+-,都道府県 (勤務先)
+-,郵便番号 (勤務先)
+-,国 (勤務先)
+-,役職
+-,部門
+-,組織
+webpage_1,Web ページ 1
+webpage_2,Web ページ 2
+birthday_year,誕生年
+birthday_month,誕生月
+birthday_day,誕生日
+-,追加情報 1
+-,追加情報 2
+-,追加情報 3
+-,追加情報 4
+memo,メモ

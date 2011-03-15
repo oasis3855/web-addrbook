@@ -1,0 +1,171 @@
+/* WebSVN Administrator */
+/* CSS : スタイルシート*/
+
+/* ページ全体 */
+body {
+    position: relative;
+    width: 800px;
+    margin: 0 auto;
+    padding: 10px 5px;
+    font-family: sans-serif;
+    font-size: 11pt;
+
+    color: black;
+    background-color: white;
+}
+
+/* ページ左 */
+div#main_content_left {
+    float: left;
+    width: 170px;
+}
+
+/* ページ右 */
+div#main_content_right {
+    float: right;
+    width: 625px;
+}
+
+/* フッター */
+div#footer {
+    width: 795px;
+    text-align: center;
+    color: gray;
+    border-top: 1px solid lightgray;
+}
+
+/* 回りこみ解除 */
+div.clear {
+    clear:both;
+    display:block;
+    visibility:hidden;
+}
+
+
+h1 {
+    font-size: 20px;
+    color: gray;
+    font-weight:lighter;
+    padding: 5px 2px;
+}
+
+
+h2 {
+    font-size: 20px;
+    color: gray;
+    font-weight:lighter;
+    border-bottom: 1px solid gray;
+    padding: 5px 2px;
+}
+
+/* 左ペインのリンクメニュー */
+#main_content_left ul {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    list-style: none;
+}
+
+#main_content_left li {
+    margin: 0;
+    padding: 0;
+}
+
+#main_content_left a {
+    display: block;
+    color: black;
+    font-size: 12px;
+    height: 20px;
+    text-decoration: none;
+    padding: 1px 1px 1px 5px;
+    border: 1px dotted #fffdf5;
+}
+
+#main_content_left a:hover {
+    color: red;
+    background-color: #f0d792;
+    border: 1px solid red;
+}
+
+/* 右ペインのリスト項目 */
+#main_content_right ul {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    list-style: none;
+}
+
+#main_content_right li {
+    margin: 0;
+    padding: 0;
+}
+
+
+/* 連絡先 項目リスト */
+li.person {
+}
+
+a.person {
+    background: url(icon-person.png) center left no-repeat;
+    padding-left: 24px;
+/*    margin-left:20px;*/
+}
+
+
+#footer a {
+    color: gray;
+}
+
+/* 入力ボックス */
+input, select {
+    padding:1px;
+    margin:1px;
+    border-right:1px solid #000;
+    border-bottom:1px solid #000;
+    border-left:1px solid #b2b2b2;
+    border-top:1px solid #b2b2b2;
+    background-color:#e0e0e0;
+}
+
+/* ボタンを横一列に並べる */
+form.horiz {
+    display: inline;
+    border: none;
+}
+
+
+/* 行先頭に インフォメーション アイコン */
+p.info {
+    background: url(icon-info.png) center left no-repeat;
+    padding-left: 24px;
+}
+
+
+/* 行先頭に エラー アイコン */
+p.error {
+    background: url(icon-stop.png) center left no-repeat;
+    padding-left: 24px;
+}
+
+/* 行先頭に OK アイコン */
+p.ok {
+    background: url(icon-ok.png) center left no-repeat;
+    padding-left: 24px;
+}
+
+
+/* コマンドの出力（ボックス囲み）*/
+pre {
+    font-family: monospace;
+    font-size: 12px;
+    line-height: 1.5em;
+    border: 1px solid #b0b0b0;
+    padding: 5px 10px 8px 10px;
+    margin:0 10px 10px;
+    background-color: #f0f0f0;
+    overflow-x: scroll;
+    width: 600px;    /* IE対策 */
+    white-space: pre;
+}
+
+

@@ -1,0 +1,25 @@
+name_print,Name
+name_given,Given Name
+-,Additional Name
+name_family,Family Name
+-,Yomi Name
+-,Given Name Yomi
+-,Additional Name Yomi
+-,Family Name Yomi
+email_1,E-mail 1 - Value
+email_2,E-mail 2 - Value
+'自宅TEL',Phone 1 - Type
+tel_home,Phone 1 - Value
+'携帯TEL',Phone 2 - Type
+tel_mobile,Phone 2 - Value
+'FAX',Phone 3 - Type
+tel_fax,Phone 3 - Value
+'仕事TEL',Phone 4 - Type
+tel_work,Phone 4 - Value
+addr_street_1||addr_street_2,Address 1 - Street
+addr_city,Address 1 - City
+addr_pref,Address 1 - Region
+'住所',Address 1 - Type
+addr_pref||' '||addr_city||' '||addr_street_1||' '||addr_street_2,Address 1 - Formatted
+birthday_year||'/'||birthday_month||'/'||birthday_day,Birthday
+memo,Notes
