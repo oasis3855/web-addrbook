@@ -1,5 +1,34 @@
 #!/usr/bin/perl
 
+# save this file in << UTF-8  >> encode !
+# ******************************************************
+# Software name : Web-Addrbook （Thunderbird連絡先管理DB）
+#
+# Copyright (C) INOUE Hirokazu, All Rights Reserved
+#     http://oasis.halfmoon.jp/
+#
+# csv2html-thumb.pl
+# version 0.1 (2011/March/16)
+#
+# GNU GPL Free Software
+#
+# このプログラムはフリーソフトウェアです。あなたはこれを、フリーソフトウェア財
+# 団によって発行された GNU 一般公衆利用許諾契約書(バージョン2か、希望によっては
+# それ以降のバージョンのうちどれか)の定める条件の下で再頒布または改変することが
+# できます。
+# 
+# このプログラムは有用であることを願って頒布されますが、*全くの無保証* です。
+# 商業可能性の保証や特定の目的への適合性は、言外に示されたものも含め全く存在し
+# ません。詳しくはGNU 一般公衆利用許諾契約書をご覧ください。
+# 
+# あなたはこのプログラムと共に、GNU 一般公衆利用許諾契約書の複製物を一部受け取
+# ったはずです。もし受け取っていなければ、フリーソフトウェア財団まで請求してく
+# ださい(宛先は the Free Software Foundation, Inc., 59 Temple Place, Suite 330
+# , Boston, MA 02111-1307 USA)。
+#
+# http://www.opensource.jp/gpl/gpl.ja.html
+# ******************************************************
+
 use strict;
 use warnings;
 use utf8;
@@ -44,8 +73,7 @@ my $str_filepath_datastruct_gm = './datastruct_gmail.csv';
 my $str_filepath_csv_tmp = $str_dir_db.'/temp.csv';	# アップロード時の一時ファイル名
 my $str_dir_backup = './backup';		# 末尾に / は付けないdir名
 
-
-my $str_this_script = basename($0);
+my $str_this_script = basename($0);		# このスクリプト自身のファイル名
 
 my $q = new CGI;
 
@@ -75,7 +103,7 @@ if(defined($q->url_param('mode'))){
 sub_check_auth($str_this_script, 'web-addrbook', 0);
 # ログオフの場合
 if(defined($q->url_param('mode')) && $q->url_param('mode') eq 'logoff'){
-		sub_logoff_auth($str_this_script, 1);
+		sub_logoff_auth($str_this_script, 1);	# ログオフしてスクリプト終了
 }
 
 # HTML出力を開始する
@@ -125,8 +153,11 @@ sub sub_print_start_html{
 
 	my $q_ref = shift;	# CGIオブジェクト
 
-	print $$q_ref->header(-type=>'text/html', -charset=>'utf-8');
-	print $$q_ref->start_html(-title=>"Thunderbirdアドレス帳CSVの取り込み", -dtd=>['-//W3C//DTD XHTML 1.0 Transitional//EN','http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd'], -lang=>'ja-JP', -style=>{'src'=>'style.css'});
+	print($$q_ref->header(-type=>'text/html', -charset=>'utf-8'));
+	print($$q_ref->start_html(-title=>"Thunderbirdアドレス帳CSVの取り込み",
+			-dtd=>['-//W3C//DTD XHTML 1.0 Transitional//EN','http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd'],
+			-lang=>'ja-JP',
+			-style=>{'src'=>'style.css'}));
 
 # ヘッダの表示
 print << '_EOT';
@@ -225,6 +256,7 @@ sub sub_check_files{
 
 }
 
+# ホーム画面（DB内のデータ数を表示）
 sub sub_disp_home{
 	print("<h1>Home Screen (ホーム画面)</h1>\n".
 		"<p>Databaseに登録されているデータ数を検索中 ...</p>\n");
@@ -241,7 +273,7 @@ sub sub_disp_home{
 	$dbh->disconnect;
 }
 
-
+# データ一覧を画面表示
 sub sub_list_db{
 	my $dbh = DBI->connect("dbi:SQLite:dbname=$str_filepath_db","","",{PrintError=>0}) or sub_error_exit("DBI open error : ".$DBI::errstr);
 	
@@ -257,7 +289,7 @@ sub sub_list_db{
 			if(defined($arr[$i]) && length($arr[$i])>0){ $arr[$i] = sub_conv_to_flagged_utf8($arr[$i], 'utf8'); }
 		}
 		print("<li class=\"person\"><a class=\"person\">");
-		for( $i=0; $i<=$#arr; $i++){
+		for(my $i=0; $i<=$#arr; $i++){
 			print((defined($arr[$i])?$arr[$i]:'').",");
 		}
 		print("</a></li>\n");
@@ -299,6 +331,7 @@ sub sub_disp_upload_filepick{
 		"</form>\n");
 }
 
+# CSVファイルをアップロード
 sub sub_upload_csv{
 	my $q_ref = shift;
 	my $flag_purge_data = shift;
