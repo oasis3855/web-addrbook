@@ -34,8 +34,9 @@ use warnings;
 use utf8;
 
 # ユーザディレクトリ下のCPANモジュールを読み込む
-use lib '/home/tmg1136-inue/local/lib/perl5';
-use lib '/home/tmg1136-inue/local/lib/perl5/site_perl/5.8.9/mach';
+use lib ((getpwuid($<))[7]).'/local/cpan/lib/perl5';    # ユーザ環境にCPANライブラリを格納している場合
+use lib ((getpwuid($<))[7]).'/local/lib/perl5';         # ユーザ環境にCPANライブラリを格納している場合
+use lib ((getpwuid($<))[7]).'/local/lib/perl5/site_perl/5.8.9/mach';         # ユーザ環境にCPANライブラリを格納している場合
 
 use CGI;
 use File::Basename;
@@ -44,10 +45,10 @@ use DBI;
 use Text::CSV_XS;
 use Data::Dumper;
 use Encode::Guess qw/euc-jp shiftjis iso-2022-jp/;	# 必要ないエンコードは削除すること
-
+use HTML::Entities;
 use DBD::SQLite;	# SQLiteバージョンを出すためのみに使用
 
-require '/home/tmg1136-inue/auth/script/auth_md5_utf8.pl';	# 認証システム
+require ((getpwuid($<))[7]).'/auth/script/auth_md5_utf8.pl';	# 認証システム
 
 
 my $flag_os = 'linux';	# linux/windows
@@ -65,16 +66,19 @@ if($flag_charcode eq 'shiftjis'){
 }
 
 
-my $str_dir_db = './data';	# DBや一時ファイルが存在するdir名
-my $str_filepath_db = $str_dir_db.'/data.sqlite';	# SQLite DBファイル名
+my $str_dir_db = './data';		# DBや一時ファイルが存在するdir名
+my $str_dir_backup = './backup';		# バックアップファイルを格納するdir名
+
+my $str_filepath_csv_tmp = './data/temp.csv';	# アップロード時の一時ファイル名
+my $str_dsn = "dbi:SQLite:dbname=./data/data.sqlite";	# SQLite DB
+
 my $str_filepath_datastruct = './datastruct.csv';
 my $str_filepath_datastruct_tb = './datastruct_thunderbird.csv';
 my $str_filepath_datastruct_gm = './datastruct_gmail.csv';
-my $str_filepath_csv_tmp = $str_dir_db.'/temp.csv';	# アップロード時の一時ファイル名
-my $str_dir_backup = './backup';		# 末尾に / は付けないdir名
 
 my $str_this_script = basename($0);		# このスクリプト自身のファイル名
 
+{	# 利用変数がグローバル化しないように囲う
 my $q = new CGI;
 
 # 必要なディレクトリ、ファイルが存在するかチェックする
@@ -115,7 +119,13 @@ if(defined($q->url_param('mode'))){
 	if($q->url_param('mode') eq 'list'){
 		sub_list_db();
 	}
-	if($q->url_param('mode') eq 'backup'){
+	elsif($q->url_param('mode') eq 'edit'){
+		sub_edit_db(\$q);
+	}
+	elsif($q->url_param('mode') eq 'add'){
+		sub_edit_addnew_db(\$q);
+	}
+	elsif($q->url_param('mode') eq 'backup'){
 		sub_backup_db(\$q);
 	}
 	elsif($q->url_param('mode') eq 'upload_pick'){
@@ -130,6 +140,9 @@ if(defined($q->url_param('mode'))){
 	elsif($q->url_param('mode') eq 'restore'){
 		sub_restore($q->url_param('file'));
 	}
+	else{
+		print("<p class=\"error\">URLパラメータ（mode）が想定外です</p>\n");
+	}
 }
 elsif(defined($q->param('uploadfile')) && length($q->param('uploadfile'))>0){
 	my $flag_purge_data = 0;
@@ -143,10 +156,13 @@ else{
 }
 
 # HTML出力を閉じる（フッタ部分の表示）
-sub_print_close_html();
+sub_print_close_html(\$q);
+
+}	# 利用変数がグローバル化しないように囲う（ここまで）
 
 exit;
 
+####################### スクリプト実行終了
 
 # htmlを開始する（HTML構文を開始して、ヘッダを表示する）
 sub sub_print_start_html{
@@ -178,6 +194,7 @@ _EOT
 		"<ul>\n".
 		"<li><a href=\"".$str_this_script."\">Home</a></li>\n".
 		"<li><a href=\"".$str_this_script."?mode=list\">List Database</a></li>\n".
+		"<li><a href=\"".$str_this_script."?mode=add\">Add one entry</a></li>\n".
 		"<li><a href=\"".$str_this_script."?mode=backup\">Backup Database</a></li>\n".
 		"<li><a href=\"".$str_this_script."?mode=upload_pick\">Upload CSV</a></li>\n".
 		"<li><a href=\"".$str_this_script."?mode=download\">Download CSV</a></li>\n".
@@ -194,6 +211,7 @@ _EOT
 
 # htmlを閉じる（フッタ部分を表示して、HTML構文を閉じる）
 sub sub_print_close_html{
+	my $q_ref = shift;	# CGIオブジェクトへのリファレンス
 
 print << '_EOT_FOOTER';
 <p>&nbsp;</p>
@@ -201,28 +219,28 @@ print << '_EOT_FOOTER';
 <p>&nbsp;</p> 
 <div class="clear"></div> 
 <div id="footer"> 
-<p><a href="http://sourceforge.jp/projects/websvn-admin/">Web-Addrbook</a> version 0.1 &nbsp;&nbsp; GNU GPL free software</p> 
+<p><a href="http://oasis.halfmoon.jp/software/">Web-Addrbook</a> version 0.1 &nbsp;&nbsp; GNU GPL free software</p> 
 </div>	<!-- id="footer" --> 
 _EOT_FOOTER
 
-	print $q->end_html;
+	print $$q_ref->end_html;
 }
 
 # エラー終了時に呼ばれるsub
+# sub_error_exit('message');
+# sub_error_exit('message', \$q);	# HTML構文を始める場合
 sub sub_error_exit{
-	my $str = shift;
-	
-	print("<p class=\"error\">".(defined($str)?$str:'')."</p>\n");
-	sub_print_close_html();
-	exit;
-}
+	my $str = shift;	# 出力する文字列
+	my $q_ref = shift;	# CGIオブジェクトへのリファレンス：HTML構文を始める場合のみ
 
-# エラー終了時に呼ばれるsub （HTML構文が始まっていない場合の入り口）
-sub sub_error_exit_with_htmlstart{
-	my $q_ref = shift;
-	my $str = shift;
-	sub_print_start_html($q_ref);
-	sub_error_exit($str);
+	# HTML構文を始める
+	if(defined($q_ref)){
+		sub_print_start_html($q_ref);
+	}
+	
+	print("<p class=\"error\">".(defined($str)?$str:'error')."</p>\n");
+	sub_print_close_html($q_ref);
+	exit;
 }
 
 # 各種ファイル、DBが読み書きできるか初期チェック（新規作成含む）
@@ -231,27 +249,27 @@ sub sub_check_files{
 	
 	# 必要なディレクトリが存在しなければ作成する
 	unless( -d $str_dir_db ){
-		mkdir($str_dir_db) or sub_error_exit_with_htmlstart($q_ref, "Error : unable to create ".$str_dir_db);
+		mkdir($str_dir_db) or sub_error_exit("Error : unable to create ".$str_dir_db, $q_ref);
 	}
 	unless( -d $str_dir_backup ){
-		mkdir($str_dir_backup) or sub_error_exit_with_htmlstart($q_ref, "Error : unable to create ".$str_dir_backup);
+		mkdir($str_dir_backup) or sub_error_exit("Error : unable to create ".$str_dir_backup, $q_ref);
 	}
 	
 	# ディレクトリのアクセス権限がなければエラー
-	unless( -w $str_dir_db ){ sub_error_exit_with_htmlstart($q_ref, "Error : unable to write at ".$str_dir_db); }
-	unless( -w $str_dir_backup ){ sub_error_exit_with_htmlstart($q_ref, "Error : unable to write at ".$str_dir_backup); }
+	unless( -w $str_dir_db ){ sub_error_exit("Error : unable to write at ".$str_dir_db, $q_ref); }
+	unless( -w $str_dir_backup ){ sub_error_exit("Error : unable to write at ".$str_dir_backup, $q_ref); }
 
 	# DBが存在しなければ、作成する
 	sub_make_new_table($q_ref);
 
 	# 定義ファイルを確認する
-	unless( -f $str_filepath_datastruct ){ sub_error_exit_with_htmlstart($q_ref, "Error : ".$str_filepath_datastruct." not exist"); }
-	unless( -f $str_filepath_datastruct_tb ){ sub_error_exit_with_htmlstart($q_ref, "Error : ".$str_filepath_datastruct_tb." not exist"); }
-	unless( -f $str_filepath_datastruct_gm ){ sub_error_exit_with_htmlstart($q_ref, "Error : ".$str_filepath_datastruct_gm." not exist"); }
+	unless( -f $str_filepath_datastruct ){ sub_error_exit("Error : ".$str_filepath_datastruct." not exist", $q_ref); }
+	unless( -f $str_filepath_datastruct_tb ){ sub_error_exit("Error : ".$str_filepath_datastruct_tb." not exist", $q_ref); }
+	unless( -f $str_filepath_datastruct_gm ){ sub_error_exit("Error : ".$str_filepath_datastruct_gm." not exist", $q_ref); }
 
 	# 一時ファイルを消去する
 	if( -e $str_filepath_csv_tmp){
-		unlink($str_filepath_csv_tmp) or sub_error_exit_with_htmlstart($q_ref, "Error : ".$str_filepath_csv_tmp." not possible delete");
+		unlink($str_filepath_csv_tmp) or sub_error_exit("Error : ".$str_filepath_csv_tmp." not possible delete", $q_ref);
 	}
 
 }
@@ -260,59 +278,88 @@ sub sub_check_files{
 sub sub_disp_home{
 	print("<h1>Home Screen (ホーム画面)</h1>\n".
 		"<p>Databaseに登録されているデータ数を検索中 ...</p>\n");
-	my $dbh = DBI->connect("dbi:SQLite:dbname=$str_filepath_db","","",{PrintError=>0}) or sub_error_exit("DBI open error : ".$DBI::errstr);
-	
-	# TBL_ADDRBOOK内のデータ行数を求める
-	my $str_sql = "select count(*) from TBL_ADDRBOOK";
-	my $sth = $dbh->prepare($str_sql) or sub_error_exit("DBI prepare error : ".$DBI::errstr);
-	$sth->execute() or sub_error_exit("DBI execute error : ".$DBI::errstr);
 
-	my @arr = $sth->fetchrow_array();
-	print("<p class=\"info\">データベースには  ".$arr[0]." 件のデータが格納されています</p>");
-	$sth->finish();
-	$dbh->disconnect;
+	my $dbh = undef;
+	eval{
+		# SQLサーバに接続
+		$dbh = DBI->connect($str_dsn, "", "", {PrintError => 0, AutoCommit => 1}) or die("DBI open error : ".$DBI::errstr);
+
+		# TBL_ADDRBOOK内のデータ行数を求める
+		my $str_sql = "select count(*) from TBL_ADDRBOOK";
+		my $sth = $dbh->prepare($str_sql) or die("DBI prepare error : ".$DBI::errstr);
+		$sth->execute() or die("DBI execute error : ".$DBI::errstr);
+
+		my @arr = $sth->fetchrow_array();
+		print("<p class=\"info\">データベースには  ".$arr[0]." 件のデータが格納されています</p>");
+		$sth->finish();
+		$dbh->disconnect or die(DBI::errstr);
+	};
+	if($@){
+		# evalによるDBエラートラップ：エラー時の処理
+		if(defined($dbh)){ $dbh->disconnect(); }
+		my $str = $@;
+		chomp($str);
+		sub_error_exit($str);
+	}
+
 }
 
 # データ一覧を画面表示
 sub sub_list_db{
-	my $dbh = DBI->connect("dbi:SQLite:dbname=$str_filepath_db","","",{PrintError=>0}) or sub_error_exit("DBI open error : ".$DBI::errstr);
-	
 	print("<h1>List Database (データベース内のデータ一覧)</h1>\n");
 
-	# TBL_ADDRBOOKの全データを読み出す
-	my $str_sql = "select * from TBL_ADDRBOOK";
-	my $sth = $dbh->prepare($str_sql) or sub_error_exit("DBI prepare error : ".$DBI::errstr);
-	$sth->execute() or sub_error_exit("DBI execute error : ".$DBI::errstr);
-	print("<ul>\n");
-	while(my @arr = $sth->fetchrow_array()){
-		for(my $i=0; $i<=$#arr; $i++){
-			if(defined($arr[$i]) && length($arr[$i])>0){ $arr[$i] = sub_conv_to_flagged_utf8($arr[$i], 'utf8'); }
-		}
-		print("<li class=\"person\"><a class=\"person\">");
-		for(my $i=0; $i<=$#arr; $i++){
-			print((defined($arr[$i])?$arr[$i]:'').",");
-		}
-		print("</a></li>\n");
-	}
-	print("</ul>\n");
-	$sth->finish();
-	$dbh->disconnect;
+	my $dbh = undef;
+	eval{
+		# SQLサーバに接続
+		$dbh = DBI->connect($str_dsn, "", "", {PrintError => 0, AutoCommit => 1}) or die("DBI open error : ".$DBI::errstr);
 
+		# TBL_ADDRBOOK内のデータ行数を求める
+		my $str_sql = "select * from TBL_ADDRBOOK";
+		my $sth = $dbh->prepare($str_sql) or die("DBI prepare error : ".$DBI::errstr);
+		$sth->execute() or die("DBI execute error : ".$DBI::errstr);
+
+		print("<ul>\n");
+		while(my @arr = $sth->fetchrow_array()){
+			for(my $i=0; $i<=$#arr; $i++){
+				if(defined($arr[$i]) && length($arr[$i])>0){ $arr[$i] = encode_entities(sub_conv_to_flagged_utf8($arr[$i], 'utf8')); }
+			}
+			printf("<li class=\"person\"><a href=\"".$str_this_script."?mode=edit&amp;idx=%d\" class=\"person\">%s</a><span style=\"color:gray;\">&nbsp;",
+					defined($arr[0])?$arr[0]:'0', (defined($arr[1])?$arr[1]:'').' '.(defined($arr[2])?$arr[2]:''));
+			for(my $i=3; $i<=$#arr; $i++){
+				print((defined($arr[$i])?$arr[$i]:'').",");
+			}
+			print("</span></li>\n");
+		}
+		print("</ul>\n");
+
+		$sth->finish();
+		$dbh->disconnect or die(DBI::errstr);
+	};
+	if($@){
+		# evalによるDBエラートラップ：エラー時の処理
+		if(defined($dbh)){ $dbh->disconnect(); }
+		my $str = $@;
+		chomp($str);
+		sub_error_exit($str);
+	}
 }
 
 # DBをバックアップ
 sub sub_backup_db{
 	my $q_ref = shift;
+	my $flag_title_disable = shift;		# <h1>タグを省略する場合 1 を渡す
 	
 	my $str_filepath_backup;
 	my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
 	$str_filepath_backup = sprintf("%s/%04d_%02d_%02d_%02d_%02d_%02d.csv", $str_dir_backup, $year+1900, $mon+1, $mday, $hour, $min, $sec); 
 
-	print("<h1>Backup Database (データベースのバックアップ)</h1>\n");
+	unless(defined($flag_title_disable)){
+		print("<h1>Backup Database (データベースのバックアップ)</h1>\n");
+	}
 
 	if( -e $str_filepath_backup ){ sub_error_exit("バックアップファイル ".$str_filepath_backup." がすでに存在します"); }
 
-	sub_download_csv(\$q, 'thunderbird', $str_filepath_backup);
+	sub_download_csv($q_ref, 'thunderbird', $str_filepath_backup);
 
 	print("<p class=\"info\">$str_filepath_backup にバックアップ完了</p>\n");
 
@@ -357,7 +404,6 @@ sub sub_upload_csv{
 	if($flag_purge_data == 1){
 		print("<p>既存テーブルを削除中 ...</p>\n");
 		sub_purge_db_table();
-		sub_make_new_table();
 	}
 
 
@@ -370,70 +416,99 @@ sub sub_upload_csv{
 	
 }
 
-# テーブルの新規作成
+# テーブルが存在しない場合に新規作成
+# sub_make_new_table();
+# sub_make_new_table($q_ref);	# エラー時画面出力にHTML構文開始も含める
 sub sub_make_new_table {
 	my $q_ref = shift;
 
-	my $dbh = DBI->connect("dbi:SQLite:dbname=$str_filepath_db","","",{PrintError=>0}) or sub_error_exit_with_htmlstart($q_ref, "DBI open error : ".$DBI::errstr);
-	
-	# TABLEが存在するかクエリを行う
-	my $str_sql = "select count(*) from sqlite_master where type='table' and name='TBL_ADDRBOOK'";
-	my $sth = $dbh->prepare($str_sql) or sub_error_exit_with_htmlstart($q_ref, "DBI prepare error : ".$DBI::errstr);
-	$sth->execute() or sub_error_exit_($q_ref, "DBI execute error : ".$DBI::errstr);
-	my @arr = $sth->fetchrow_array();
-	if($arr[0] == 1){
-		# テーブル数が1の時は、テーブルが存在するためサブルーチンを終了する
+	my $dbh = undef;
+	eval{
+		# SQLサーバに接続
+		$dbh = DBI->connect($str_dsn, "", "", {PrintError => 0, AutoCommit => 1}) or die("DBI open error : ".$DBI::errstr);
+
+		# TABLEが存在するかクエリを行う
+		my $str_sql = "select count(*) from sqlite_master where type='table' and name='TBL_ADDRBOOK'";
+		my $sth = $dbh->prepare($str_sql) or die("DBI prepare error : ".$DBI::errstr);
+		$sth->execute() or die("DBI execute error : ".$DBI::errstr);
+		my @arr = $sth->fetchrow_array();
+		if($arr[0] == 1){
+			# テーブル数が1の時は、テーブルが存在するためサブルーチンを終了する
+			$sth->finish();
+			$dbh->disconnect;
+			return;
+		}
 		$sth->finish();
-		$dbh->disconnect;
-		return;
-	}
-	$sth->finish();
 
+		# テーブルを新規作成する
+		$str_sql = "CREATE TABLE TBL_ADDRBOOK(".
+				"idx INTEGER PRIMARY KEY AUTOINCREMENT";
 
-	# テーブルを新規作成する
-	$str_sql = "CREATE TABLE TBL_ADDRBOOK(".
-			"idx INTEGER PRIMARY KEY AUTOINCREMENT";
+		open(FH, '<'.$str_filepath_datastruct) or die("File (datastruct) open error");
+		while(<FH>){
+			chomp;
+			s/[\x00-\x2f\x3a-\x3f@\x5b-\x5e\x7b-\xff]//g;		# SQLエレメント名で不都合な文字を削除する
+			if(length($_)>=1){ $str_sql = $str_sql . "," . $_ . " TEXT"; }
+		}
+		close(FH);
+		$str_sql .= ")";
 
-	open(FH, '<'.$str_filepath_datastruct) or sub_error_exit_with_htmlstart($q_ref, "File (datastruct) open error");
-	while(<FH>){
-		chomp;
-		s/\,\;\"\'//g;
-		if(length($_)>=1){ $str_sql = $str_sql . "," . $_ . " TEXT"; }
-	}
-	close(FH);
-	$str_sql .= ")";
-		
-	$sth = $dbh->prepare($str_sql) or sub_error_exit_with_htmlstart($q_ref, "DBI prepare error : ".$DBI::errstr);
-	$sth->execute()  or sub_error_exit_with_htmlstart($q_ref, "DBI execute error : ".$DBI::errstr);
-	$sth->finish();
-	$dbh->disconnect;
-		
+		$sth = $dbh->prepare($str_sql) or die(DBI::errstr);
+		$sth->execute() or die(DBI::errstr);
+		$sth->finish();
+
+		$dbh->disconnect or die(DBI::errstr);
+	};
+	if($@){
+		# evalによるDBエラートラップ：エラー時の処理
+		if(defined($dbh)){ $dbh->disconnect(); }
+		my $str = $@;
+		chomp($str);
+		if(defined($q_ref)){ sub_error_exit($str, $q_ref); }
+		else{ sub_error_exit($str); }
+	}		
 }
 
 # DBのTBL_ADDRBOOKテーブルのデータを空にする
 sub sub_purge_db_table{
-	my $dbh = DBI->connect("dbi:SQLite:dbname=$str_filepath_db","","",{PrintError=>0}) or sub_error_exit("DBI open error : ".$DBI::errstr);
+	my $q_ref = shift;
 
-	# TABLEが存在するかクエリを行う
-	my $str_sql = "select count(*) from sqlite_master where type='table' and name='TBL_ADDRBOOK'";
-	my $sth = $dbh->prepare($str_sql) or sub_error_exit("DBI prepare error : ".$DBI::errstr);
-	$sth->execute() or sub_error_exit("DBI execute error : ".$DBI::errstr);
-	my @arr = $sth->fetchrow_array();
-	if($arr[0] == 0){
-		# テーブル数が0の時は、テーブルが存在しないためサブルーチンを終了する
+	my $dbh = undef;
+	eval{
+		# SQLサーバに接続
+		$dbh = DBI->connect($str_dsn, "", "", {PrintError => 0, AutoCommit => 1}) or die("DBI open error : ".$DBI::errstr);
+
+		# TABLEが存在するかクエリを行う
+		my $str_sql = "select count(*) from sqlite_master where type='table' and name='TBL_ADDRBOOK'";
+		my $sth = $dbh->prepare($str_sql) or die("DBI prepare error : ".$DBI::errstr);
+		$sth->execute() or die("DBI execute error : ".$DBI::errstr);
+		my @arr = $sth->fetchrow_array();
+		if($arr[0] != 1){
+			# テーブル数が1の時は、テーブルが存在しないためサブルーチンを終了する
+			$sth->finish();
+			$dbh->disconnect;
+			return;
+		}
 		$sth->finish();
-		$dbh->disconnect;
-		return;
-	}
-	$sth->finish();
-	$sth = undef;
 
-	# テーブルを削除する
-	$str_sql = "drop table 'TBL_ADDRBOOK'";
-	$sth = $dbh->prepare($str_sql) or sub_error_exit("DBI prepare error : ".$DBI::errstr);
-	$sth->execute() or sub_error_exit("DBI execute error : ".$DBI::errstr);
-	$sth->finish();
-	$dbh->disconnect;
+		# テーブルを削除する
+		$str_sql = "drop table TBL_ADDRBOOK";
+		$sth = $dbh->prepare($str_sql) or die(DBI::errstr);
+		$sth->execute() or die(DBI::errstr);
+		$sth->finish();
+
+		$dbh->disconnect or die(DBI::errstr);
+		
+		# テーブルを新規作成する
+		sub_make_new_table();
+	};
+	if($@){
+		# evalによるDBエラートラップ：エラー時の処理
+		if(defined($dbh)){ $dbh->disconnect(); }
+		my $str = $@;
+		chomp($str);
+		sub_error_exit($str);
+	}
 }
 
 # thunderbird形式CSVを読み込んで、DBに追加する
@@ -456,17 +531,23 @@ sub sub_add_from_csv {
 	print("<p>入力CSVの文字コード検出 : ".$enc."</p>\n");
 
 	# CSVファイルを読み込んで、1行ずつ処理（DB登録）
-	if(open(FH_IN, '<'.$str_filepath_csv_tmp)){
+	open(FH_IN, '<'.$str_filepath_csv_tmp) or sub_error_exit("Error : 一時ファイルを開くことができません");
 
-		my $csv = Text::CSV_XS->new({binary=>1});
+	my $csv = Text::CSV_XS->new({binary=>1});
 
-		# CSVファイル1行目はカラム名の列挙
-		my $str_line = <FH_IN>;
-		$str_line = sub_conv_to_flagged_utf8($str_line, $enc);
-		$csv->parse($str_line);
-		my @arr_keyname = $csv->fields();
+	my $str_line = <FH_IN>;
 
-		my $dbh = DBI->connect("dbi:SQLite:dbname=$str_filepath_db","","",{PrintError=>0}) or sub_error_exit("DBI open error : ".$DBI::errstr);
+	# CSVファイル1行目はカラム名の列挙
+	$str_line = sub_conv_to_flagged_utf8($str_line, $enc);
+	$csv->parse($str_line);
+	my @arr_keyname = $csv->fields();
+
+	# CSVファイル2行目以降のデータをDBに登録する
+	my $dbh = undef;
+	eval{
+		# SQLサーバに接続
+		$dbh = DBI->connect($str_dsn, "", "", {PrintError => 0, AutoCommit => 1}) or die("DBI open error : ".$DBI::errstr);
+
 		# SQL文 "INSERT INTO TBL_ADDRBOOK ('name_family','name_given') VALUES (?,?)"
 		my $str_sql = "INSERT INTO TBL_ADDRBOOK (";
 		my @arr_keys = keys(%hash_coord);
@@ -483,7 +564,7 @@ sub sub_add_from_csv {
 		$str_sql = substr($str_sql, 0, length($str_sql)-1);		# 末尾の "," を除去
 		$str_sql .= ')';
 		
-		my $sth = $dbh->prepare($str_sql) or sub_error_exit("DBI prepare error : ".$DBI::errstr);
+		my $sth = $dbh->prepare($str_sql) or die(DBI::errstr);
 
 		# CSV各行を INSERT 文でDBに登録
 		my $n_count = 0;
@@ -506,22 +587,24 @@ sub sub_add_from_csv {
 				if($arr_keys[$i] eq '-'){ next; }	# カラム名が '-' はDBに存在しないためスキップ
 				push(@arr_values, $hash_elem{$hash_coord{$arr_keys[$i]}});
 			}
-			if($sth){ $sth->execute(@arr_values);}
+			$sth->execute(@arr_values) or die(DBI::errstr);
 			$n_count++;
 		}
 
-		if($sth){ $sth->finish();}
-		$dbh->disconnect;
+		$sth->finish();
+		$dbh->disconnect or die(DBI::errstr);
 
-		close(FH_IN);
-		
 		print("<p class=\"info\">".$n_count." 件のデータを登録しました</p>\n");
-
+	};
+	if($@){
+		# evalによるDBエラートラップ：エラー時の処理
+		if(defined($dbh)){ $dbh->disconnect(); }
+		my $str = $@;
+		chomp($str);
+		sub_error_exit($str);
 	}
-	else{
-		sub_error_exit("Error : 一時ファイルを開くことができません");
-	}
 
+	close(FH_IN);
 }
 
 
@@ -551,7 +634,7 @@ sub sub_download_csv{
 	
 	# ダウンロード用のヘッダを出力
 	if($output_mode eq 'download'){
-		print $$q_ref->header(-type=>'application/octet-stream', -attachment=>'test.csv');
+		print $$q_ref->header(-type=>'application/octet-stream', -attachment=>'addrbook.csv');
 		# print qq{Content-Disposition: attachment; filename="filename.csv"\n};
 		# print qq{Content-type: application/octet-stream\n\n};
 	}
@@ -569,50 +652,58 @@ sub sub_download_csv{
 	close(FH);
 
 
-	my $dbh = DBI->connect("dbi:SQLite:dbname=$str_filepath_db","","",{PrintError=>0}) or sub_error_exit("DBI open error : ".$DBI::errstr);
+	my $dbh = undef;
+	eval{
+		# SQLサーバに接続
+		$dbh = DBI->connect($str_dsn, "", "", {PrintError => 0, AutoCommit => 1}) or die("DBI open error : ".$DBI::errstr);
 
-	# SQL文 "SELECT 'name_family','name_given' FROM TBL_ADDRBOOK"
-	my $str_sql = "select ";
-	for(my $i=0; $i<=$#arr_keys; $i++){
-		if($arr_keys[$i] eq '-'){ $str_sql .= "'',"; }	# カラム名が '-' はDBのnullカラム（''）を出力
-		else{ $str_sql .= $arr_keys[$i].","; }
-	}
-	$str_sql = substr($str_sql, 0, length($str_sql)-1);		# 末尾の "," を除去
-	$str_sql .= " from TBL_ADDRBOOK";
-
-	my $sth = $dbh->prepare($str_sql) or sub_error_exit("DBI prepare error : ".$DBI::errstr);
-	$sth->execute() or sub_error_exit("DBI execute error : ".$DBI::errstr);
-
-	if($output_mode ne 'download'){
-		open(FH, '>'.$str_filepath_backup) or sub_error_exit("バックアップファイル ".$str_filepath_backup." に書き込めません");
-	}
-	
-	# CSV出力開始
-	for(my $i=0; $i<=$#arr_label; $i++){
-		if($output_mode eq 'download'){ print($arr_label[$i].","); }
-		else{ print(FH $arr_label[$i].","); }
-	}
-	if($output_mode eq 'download'){ print("\n"); }
-	else{ print(FH "\n"); }
-
-	my $csv = Text::CSV_XS->new({binary=>1});
-
-	while(my @arr = $sth->fetchrow_array()){
-		for(my $i=0; $i<=$#arr; $i++){
-			if(defined($arr[$i]) && length($arr[$i])>0){ $arr[$i] = sub_conv_to_flagged_utf8($arr[$i], 'utf8'); }
+		# SQL文 "SELECT 'name_family','name_given' FROM TBL_ADDRBOOK"
+		my $str_sql = "select ";
+		for(my $i=0; $i<=$#arr_keys; $i++){
+			if($arr_keys[$i] eq '-'){ $str_sql .= "'',"; }	# カラム名が '-' はDBのnullカラム（''）を出力
+			else{ $str_sql .= $arr_keys[$i].","; }
 		}
-		$csv->combine(@arr);
-		if($output_mode eq 'download'){ print($csv->string()."\n"); }
-		else{ print(FH $csv->string()."\n"); }
+		$str_sql = substr($str_sql, 0, length($str_sql)-1);		# 末尾の "," を除去
+		$str_sql .= " from TBL_ADDRBOOK";
+
+		my $sth = $dbh->prepare($str_sql) or die($DBI::errstr);
+		$sth->execute() or die($DBI::errstr);
+
+		if($output_mode ne 'download'){
+			open(FH, '>'.$str_filepath_backup) or die("バックアップファイル ".$str_filepath_backup." に書き込めません");
+		}
+		
+		# CSV出力開始
+		for(my $i=0; $i<=$#arr_label; $i++){
+			if($output_mode eq 'download'){ print($arr_label[$i].","); }
+			else{ print(FH $arr_label[$i].","); }
+		}
+		if($output_mode eq 'download'){ print("\n"); }
+		else{ print(FH "\n"); }
+
+		my $csv = Text::CSV_XS->new({binary=>1});
+
+		while(my @arr = $sth->fetchrow_array()){
+			for(my $i=0; $i<=$#arr; $i++){
+				if(defined($arr[$i]) && length($arr[$i])>0){ $arr[$i] = sub_conv_to_flagged_utf8($arr[$i], 'utf8'); }
+			}
+			$csv->combine(@arr);
+			if($output_mode eq 'download'){ print($csv->string()."\n"); }
+			else{ print(FH $csv->string()."\n"); }
+		}
+
+		if($output_mode ne 'download'){ close(FH); }
+
+		$sth->finish();
+		$dbh->disconnect or die(DBI::errstr);
+	};
+	if($@){
+		# evalによるDBエラートラップ：エラー時の処理
+		if(defined($dbh)){ $dbh->disconnect(); }
+		my $str = $@;
+		chomp($str);
+		sub_error_exit($str);
 	}
-
-	if($output_mode ne 'download'){ close(FH); }
-
-
-	$sth->finish();
-	$dbh->disconnect;
-
-	
 }
 
 # リストアのファイル選択画面を表示する
@@ -660,6 +751,229 @@ sub sub_restore{
 	print "<p class=\"ok\">データの取り込み完了</p>\n";
 
 }
+
+
+# DB項目の編集
+# sub_edit_db(\$q);
+sub sub_edit_db{
+	my $q_ref = shift;
+
+	my $idx = undef;	# TBL_ADDRBOOK の idx に対応
+	my @arr_post = ();	# 書き換え用 post パラメータ受け取り
+	my @arr_label = ();	# DBのラベル列挙
+	my $flag_post_detect = 0;	# postメッセージが確認されたら1
+
+	print("<h1>Edit database entry (データベースの項目編集)</h1>\n");
+
+	# DBのラベル名一覧を得る
+	open(FH, '<'.$str_filepath_datastruct) or sub_error_exit("File (datastruct) open error");
+	while(<FH>){
+		chomp;
+		s/\,\;\"\'//g;
+		if(length($_)>=1){ push(@arr_label, $_); }
+	}
+	close(FH);
+
+	# sqliteカラム名とThunderbirdカラム名の対応関係のハッシュを作成
+	my %hash_coord;
+	open(FH, '<'.$str_filepath_datastruct_tb) or sub_error_exit("File (datastruct_tb) open error");
+	while(<FH>){
+		chomp;
+		my $str_line = sub_conv_to_flagged_utf8($_);
+		my @arr = split(/\,/, $str_line);
+		if($#arr != 1){ next; }
+		$hash_coord{$arr[0]} = encode_entities($arr[1]);		# 例 $hash{'name_family'} = '姓'
+	}
+	close(FH);
+
+
+	if(defined($$q_ref->url_param('idx'))){ $idx = $$q_ref->url_param('idx'); }
+	if(!defined($idx) or $idx < 0){ sub_error_exit('想定外のURLパラメータ'); }
+
+	# URLパラメータとPOSTパラメータのidxは同一のはず（仕様）$q->postはpostパラメータを優先して出力
+	if(defined($$q_ref->param('idx'))){
+		if($$q_ref->param('idx') ne $idx){
+			sub_error_exit('想定外のURLパラメータ');
+		}
+	}
+	# postパラメータを配列に格納する
+	for(my $i=0; $i<=$#arr_label; $i++){
+		if(defined($$q_ref->param($arr_label[$i])) and $$q_ref->param($arr_label[$i]) ne ''){
+			$arr_post[$i] = sub_conv_to_flagged_utf8(decode_entities($$q_ref->param($arr_label[$i])), 'utf8');
+			$flag_post_detect = 1;		# POSTで入力があった「フラグ」を立てる
+		}
+		else{ $arr_post[$i] = ''; }
+	}
+
+
+	my $dbh = undef;
+	eval{
+		# SQLサーバに接続
+		$dbh = DBI->connect($str_dsn, "", "", {PrintError => 0, AutoCommit => 1}) or die("DBI open error : ".$DBI::errstr);
+
+		# データ１件削除
+		if(defined($$q_ref->param('delete'))){
+			print("<p>1件のデータ (idx=".$idx.") を削除中...</p>\n");
+			# TBL_ADDRBOOKのidx=$idxデータを変更する
+			my $str_sql = "delete from TBL_ADDRBOOK where idx=?";
+			my $sth = $dbh->prepare($str_sql) or die("DBI prepare error : ".$DBI::errstr);
+			$sth->execute($idx) or die("DBI execute error : ".$DBI::errstr);
+			$sth->finish();
+			print("<p class=\"ok\">1件のデータ削除完了</p>\n");
+			$dbh->disconnect or die(DBI::errstr);
+			
+			return;
+		}
+
+		# TBL_ADDRBOOK のデータ書き換え（UPDATE命令）
+		if($flag_post_detect == 1){
+			print("<p>DB書き換え中...</p>\n");
+			# TBL_ADDRBOOKのidx=$idxデータを変更する
+			my $str_sql = "update TBL_ADDRBOOK set ";
+			for(my $i=0; $i<=$#arr_label; $i++){
+				$str_sql = $str_sql . $arr_label[$i] . "=?";
+				if($i<$#arr_label){ $str_sql .= ','; }
+			}
+			$str_sql .= " where idx=?";
+			my $sth = $dbh->prepare($str_sql) or die("DBI prepare error : ".$DBI::errstr);
+			push(@arr_post, $idx);	# executeバインド時に、末尾がidxのため追加
+			$sth->execute(@arr_post) or die("DBI execute error : ".$DBI::errstr);
+			$sth->finish();
+			print("<p class=\"ok\">DB書き換え完了</p>\n");
+		}
+
+
+		# TBL_ADDRBOOKのidx=$idxデータを読み出す
+		my $str_sql = "select idx,".join(',',@arr_label)." from TBL_ADDRBOOK where idx=?";
+		my $sth = $dbh->prepare($str_sql) or die("DBI prepare error : ".$DBI::errstr);
+		$sth->execute($idx) or die("DBI execute error : ".$DBI::errstr);
+
+		my @arr = $sth->fetchrow_array();
+		if($sth->rows != 1){
+			print("<p>idxに一致するデータが存在しません</p>\n");
+		}
+		else{
+			print("<form method=\"post\" action=\"".$str_this_script."?mode=edit&amp;idx=".$arr[0]."\" name=\"form1\">\n".
+					"<table border=\"0\" cellpadding=\"2\" cellspacing=\"0\">\n".
+					" <tr><td>idx</td><td><input name=\"idx\" type=\"text\" size=\"10\" value=\"".$arr[0]."\" readonly=\"readonly\" />（変更不可）</td></tr>\n");
+			for(my $i=0; $i<=$#arr_label; $i++){
+				print(" <tr><td>".$hash_coord{$arr_label[$i]}."</td><td><input name=\"".$arr_label[$i]."\" type=\"text\" size=\"50\" value=\"".encode_entities(sub_conv_to_flagged_utf8($arr[$i+1], 'utf8'))."\" /></td></tr>\n");
+			}
+			print("</table>\n".
+					"<p><input type=\"submit\" value=\"データ更新\" />&nbsp;<input type=\"submit\" name=\"delete\" value=\"このデータを削除\" /></p>\n".
+					"</form>\n");
+
+		}
+		$sth->finish();
+		$dbh->disconnect();
+	};
+	if($@){
+		# evalによるDBエラートラップ：エラー時の処理
+		if(defined($dbh)){ $dbh->disconnect(); }
+		my $str = $@;
+		chomp($str);
+		sub_error_exit($str);
+	}
+}
+
+
+# DBに新規項目追加
+# sub_edit_db(\$q);
+sub sub_edit_addnew_db{
+	my $q_ref = shift;
+
+	my $idx = undef;	# TBL_ADDRBOOK の idx に対応
+	my @arr_post = ();	# 書き換え用 post パラメータ受け取り
+	my @arr_label = ();	# DBのラベル列挙
+	my $flag_post_detect = 0;	# postメッセージが確認されたら1
+
+	print("<h1>Add database entry (データベースに1件追加)</h1>\n");
+
+	# DBのラベル名一覧を得る
+	open(FH, '<'.$str_filepath_datastruct) or sub_error_exit("File (datastruct) open error");
+	while(<FH>){
+		chomp;
+		s/\,\;\"\'//g;
+		if(length($_)>=1){ push(@arr_label, $_); }
+	}
+	close(FH);
+
+	# sqliteカラム名とThunderbirdカラム名の対応関係のハッシュを作成
+	my %hash_coord;
+	open(FH, '<'.$str_filepath_datastruct_tb) or sub_error_exit("File (datastruct_tb) open error");
+	while(<FH>){
+		chomp;
+		my $str_line = sub_conv_to_flagged_utf8($_);
+		my @arr = split(/\,/, $str_line);
+		if($#arr != 1){ next; }
+		$hash_coord{$arr[0]} = encode_entities($arr[1]);		# 例 $hash{'name_family'} = '姓'
+	}
+	close(FH);
+
+	# postパラメータを配列に格納する
+	for(my $i=0; $i<=$#arr_label; $i++){
+		if(defined($$q_ref->param($arr_label[$i])) and $$q_ref->param($arr_label[$i]) ne ''){
+			$arr_post[$i] = sub_conv_to_flagged_utf8(decode_entities($$q_ref->param($arr_label[$i])), 'utf8');
+			$flag_post_detect = 1;		# POSTで入力があった「フラグ」を立てる
+		}
+		else{ $arr_post[$i] = ''; }
+	}
+
+	
+	if($flag_post_detect == 1){
+		my $dbh = undef;
+		eval{
+			# SQLサーバに接続
+			$dbh = DBI->connect($str_dsn, "", "", {PrintError => 0, AutoCommit => 1}) or die("DBI open error : ".$DBI::errstr);
+
+
+			# TBL_ADDRBOOK へのデータ追加（INSERT命令）
+			print("<p>DBへ新規追加中...</p>\n");
+			# TBL_ADDRBOOKのidx=$idxデータを変更する
+			my $str_sql = "insert into TBL_ADDRBOOK (";
+			for(my $i=0; $i<=$#arr_label; $i++){
+				$str_sql .= $arr_label[$i];
+				if($i<$#arr_label){ $str_sql .= ','; }
+			}
+			$str_sql .= ') values (';
+			for(my $i=0; $i<=$#arr_post; $i++){
+				$str_sql .= '?';
+				if($i<$#arr_post){ $str_sql .= ','; }
+			}
+			$str_sql .= ')';
+			my $sth = $dbh->prepare($str_sql) or die("DBI prepare error : ".$DBI::errstr);
+			$sth->execute(@arr_post) or die("DBI execute error : ".$DBI::errstr);
+			$sth->finish();
+			$dbh->disconnect();
+			print("<p class=\"ok\">DBへ新規追加完了</p>\n");
+
+		};
+		if($@){
+			# evalによるDBエラートラップ：エラー時の処理
+			if(defined($dbh)){ $dbh->disconnect(); }
+			my $str = $@;
+			chomp($str);
+			sub_error_exit($str);
+		}
+	}
+	else{
+		print("<form method=\"post\" action=\"".$str_this_script."?mode=add\" name=\"form1\">\n".
+				"<table border=\"0\" cellpadding=\"2\" cellspacing=\"0\">\n");
+		for(my $i=0; $i<=$#arr_label; $i++){
+			print(" <tr><td>".$hash_coord{$arr_label[$i]}."</td><td><input name=\"".$arr_label[$i]."\" type=\"text\" size=\"50\" /></td></tr>\n");
+		}
+		print("</table>\n".
+				"<p><input type=\"submit\" value=\"この内容で新規追加\" /></p>\n".
+				"</form>\n");
+
+	}
+}
+
+
+
+
+###########################################
+# 共通関数からインポート
 
 # 任意の文字コードの文字列を、UTF-8フラグ付きのUTF-8に変換する
 sub sub_conv_to_flagged_utf8{
