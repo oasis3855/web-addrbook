@@ -1,0 +1,37 @@
+name_given,First Name
+name_family,Last Name
+name_print,Display Name
+-,Nickname
+email_1,Primary Email
+email_2,Secondary Email
+-,Screen Name
+tel_work,Work Phone
+tel_home,Home Phone
+tel_fax,Fax Number
+-,Pager Number
+tel_mobile,Mobile Number
+addr_street_1,Home Address
+addr_street_2,Home Address 2
+addr_city,Home City
+addr_pref,Home State
+addr_zip,Home ZipCode
+addr_country,Home Country
+-,Work Address
+-,Work Address 2
+-,Work City
+-,Work State
+-,Work ZipCode
+-,Work Country
+-,Job Title
+-,Department
+-,Organization
+webpage_1,Web Page 1
+webpage_2,Web Page 2
+birthday_year,Birth Year
+birthday_month,Birth Month
+birthday_day,Birth Day
+-,Custom 1
+-,Custom 2
+-,Custom 3
+-,Custom 4
+memo,Notes

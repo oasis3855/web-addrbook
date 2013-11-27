@@ -9,6 +9,7 @@
 #
 # csv2html-thumb.pl
 # version 0.1 (2011/March/16)
+# version 0.2 (2013/November/27)   thunderbird_en, CSVのクオート・区切り文字
 #
 # GNU GPL Free Software
 #
@@ -74,6 +75,7 @@ my $str_dsn = "dbi:SQLite:dbname=./data/data.sqlite";	# SQLite DB
 
 my $str_filepath_datastruct = './datastruct.csv';
 my $str_filepath_datastruct_tb = './datastruct_thunderbird.csv';
+my $str_filepath_datastruct_tben = './datastruct_thunderbird_en.csv';
 my $str_filepath_datastruct_gm = './datastruct_gmail.csv';
 
 my $str_this_script = basename($0);		# このスクリプト自身のファイル名
@@ -93,12 +95,11 @@ if(defined($q->url_param('mode'))){
 		print($q->end_html);
 		exit;
 	}
-	if($q->url_param('mode') eq 'download_thunderbird'){
-		sub_download_csv(\$q, 'thunderbird', 'download');
-		exit;
-	}
-	if($q->url_param('mode') eq 'download_gmail'){
-		sub_download_csv(\$q, 'gmail', 'download');
+
+	if($q->url_param('mode') eq 'download_csv'){
+		my $flag_csv_quote = 0;
+		if(defined($q->url_param('csv_quote'))){ $flag_csv_quote = 1; }
+		sub_download_csv(\$q, $q->url_param('type'), 'download', $flag_csv_quote, $q->url_param('csv_sep'));
 		exit;
 	}
 }
@@ -219,7 +220,7 @@ print << '_EOT_FOOTER';
 <p>&nbsp;</p> 
 <div class="clear"></div> 
 <div id="footer"> 
-<p><a href="http://oasis.halfmoon.jp/software/">Web-Addrbook</a> version 0.1 &nbsp;&nbsp; GNU GPL free software</p> 
+<p><a href="http://oasis.halfmoon.jp/software/">Web-Addrbook</a> version 0.2 &nbsp;&nbsp; GNU GPL free software</p> 
 </div>	<!-- id="footer" --> 
 _EOT_FOOTER
 
@@ -359,7 +360,7 @@ sub sub_backup_db{
 
 	if( -e $str_filepath_backup ){ sub_error_exit("バックアップファイル ".$str_filepath_backup." がすでに存在します"); }
 
-	sub_download_csv($q_ref, 'thunderbird', $str_filepath_backup);
+	sub_download_csv($q_ref, 'thunderbird', $str_filepath_backup, '1', 'comma');
 
 	print("<p class=\"info\">$str_filepath_backup にバックアップ完了</p>\n");
 
@@ -612,15 +613,26 @@ sub sub_add_from_csv {
 sub sub_disp_download{
 	print("<h1>Download CSV datafile (CSVファイルのダウンロード)</h1>\n");
 	
-	print("<ul>\n<li><a href=\"".$str_this_script."?mode=download_thunderbird\">Thunderbird形式CSVをダウンロード</a></li>\n".
-		"<li><a href=\"".$str_this_script."?mode=download_gmail\">GMail連絡先形式CSVをダウンロード</a></li>\n</ul>\n");
+	print("<form method=\"get\" action=\"".$str_this_script."\">\n".
+		"<input name=\"mode\" type=\"hidden\" value=\"download_csv\" />\n".
+		"<input name=\"type\" type=\"radio\" value=\"thunderbird\" checked=\"checked\" />Thunderbird形式CSV<br />\n".
+		"<input name=\"type\" type=\"radio\" value=\"thunderbird_en\" />Thunderbird形式CSV英語版）<br />\n".
+		"<input name=\"type\" type=\"radio\" value=\"gmail\" />GMail連絡先形式CSV<br /><br />\n".
+		"<input name=\"csv_quote\" type=\"checkbox\" value=\"1\" checked=\"checked\" />CSV文字列をクオートする（ ””で囲む ）<br />\n".
+		"項目区切り文字 <input name=\"csv_sep\" type=\"radio\" value=\"comma\" checked=\"checked\" />コンマ <input name=\"csv_sep\" type=\"radio\" value=\"tab\" />タブ<br />\n".
+		"<input type=\"submit\" value=\"ダウンロード\" />\n".
+		"</form>\n");
+
+	print("<p>Thunderbirdには“CSVクオート：有効”、GMailには“CSVクオート：無効”で出力してください</p>\n");
 }
 
-# CSVのダウンロード
+# CSVのダウンロード（または、バックアップ）
 sub sub_download_csv{
 	my $q_ref = shift;
 	my $csv_mode = shift;	# 出力形式（thunderbird,gmail）
 	my $output_mode = shift;	# 出力モード（download, $backup_filepath）
+	my $flag_csv_quote = shift;	# CSV内の文字列をクオートする場合１
+	my $flag_csv_sep = shift;	# CSV内の各項目を区切る文字形式（comma または tab）
 
 	my $str_filepath_datastruct_sel;
 	my $str_filepath_backup = $output_mode;		# バックアップ時はファイル名
@@ -628,8 +640,14 @@ sub sub_download_csv{
 	my @arr_keys;
 	my @arr_label;
 
-	if($csv_mode eq 'thunderbird'){ $str_filepath_datastruct_sel = $str_filepath_datastruct_tb; }
-	if($csv_mode eq 'gmail'){ $str_filepath_datastruct_sel = $str_filepath_datastruct_gm; }
+	# クオート形式指定が不正な場合は、クオートしない
+	if(!defined($flag_csv_quote) || $flag_csv_quote ne '1'){ $flag_csv_quote = 0; }
+	# 区切り文字形式が不正な場合は、コンマ形式
+	if(!defined($flag_csv_sep) || $flag_csv_sep ne 'tab'){ $flag_csv_sep = 'comma'; }
+
+	$str_filepath_datastruct_sel = $str_filepath_datastruct_tb;		# デフォルトはThunderbird形式
+	if($csv_mode eq 'thunderbird_en'){ $str_filepath_datastruct_sel = $str_filepath_datastruct_tben; }
+	elsif($csv_mode eq 'gmail'){ $str_filepath_datastruct_sel = $str_filepath_datastruct_gm; }
 
 	
 	# ダウンロード用のヘッダを出力
@@ -681,7 +699,7 @@ sub sub_download_csv{
 		if($output_mode eq 'download'){ print("\n"); }
 		else{ print(FH "\n"); }
 
-		my $csv = Text::CSV_XS->new({binary=>1});
+		my $csv = Text::CSV_XS->new({binary=>1, quote_char=>$flag_csv_quote==0?undef:'"', sep_char=>$flag_csv_sep eq 'comma'?',':"\t"});
 
 		while(my @arr = $sth->fetchrow_array()){
 			for(my $i=0; $i<=$#arr; $i++){
