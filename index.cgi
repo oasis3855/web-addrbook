@@ -10,6 +10,7 @@
 # csv2html-thumb.pl
 # version 0.1 (2011/March/16)
 # version 0.2 (2013/November/27)   thunderbird_en, CSVのクオート・区切り文字
+# version 0.3 (2014/January/06)    検索実装
 #
 # GNU GPL Free Software
 #
@@ -120,6 +121,12 @@ if(defined($q->url_param('mode'))){
 	if($q->url_param('mode') eq 'list'){
 		sub_list_db();
 	}
+	elsif($q->url_param('mode') eq 'query_input'){
+		sub_query_db_input();
+	}
+	elsif($q->url_param('mode') eq 'query'){
+		sub_query_db(\$q);
+	}
 	elsif($q->url_param('mode') eq 'edit'){
 		sub_edit_db(\$q);
 	}
@@ -140,6 +147,9 @@ if(defined($q->url_param('mode'))){
 	}
 	elsif($q->url_param('mode') eq 'restore'){
 		sub_restore($q->url_param('file'));
+	}
+	elsif($q->url_param('mode') eq 'logoff'){
+		print "<p>ログオフ 完了</p>\n";
 	}
 	else{
 		print("<p class=\"error\">URLパラメータ（mode）が想定外です</p>\n");
@@ -195,6 +205,7 @@ _EOT
 		"<ul>\n".
 		"<li><a href=\"".$str_this_script."\">Home</a></li>\n".
 		"<li><a href=\"".$str_this_script."?mode=list\">List Database</a></li>\n".
+		"<li><a href=\"".$str_this_script."?mode=query_input\">Query Database</a></li>\n".
 		"<li><a href=\"".$str_this_script."?mode=add\">Add one entry</a></li>\n".
 		"<li><a href=\"".$str_this_script."?mode=backup\">Backup Database</a></li>\n".
 		"<li><a href=\"".$str_this_script."?mode=upload_pick\">Upload CSV</a></li>\n".
@@ -314,7 +325,7 @@ sub sub_list_db{
 		# SQLサーバに接続
 		$dbh = DBI->connect($str_dsn, "", "", {PrintError => 0, AutoCommit => 1}) or die("DBI open error : ".$DBI::errstr);
 
-		# TBL_ADDRBOOK内のデータ行数を求める
+		# TBL_ADDRBOOK内の全行のデータを得る
 		my $str_sql = "select * from TBL_ADDRBOOK";
 		my $sth = $dbh->prepare($str_sql) or die("DBI prepare error : ".$DBI::errstr);
 		$sth->execute() or die("DBI execute error : ".$DBI::errstr);
@@ -343,6 +354,86 @@ sub sub_list_db{
 		chomp($str);
 		sub_error_exit($str);
 	}
+}
+
+# DBをクエリー
+sub sub_query_db_input{
+
+	print("<h1>Query database (データベース内から検索)</h1>\n");
+
+	print("<form method=\"post\" action=\"".$str_this_script."?mode=query\" name=\"form1\">\n".
+					"検索する文字列<input name=\"keyword\" type=\"text\" size=\"30\" value=\"\" />\n".
+					"<input type=\"submit\" value=\"検索開始\" />\n".
+					"</form>\n");
+
+}
+
+# DBをクエリー
+sub sub_query_db{
+	my $q_ref = shift;
+
+	my $keyword = '';	# ユーザが指定したクエリ文字列
+	if(defined($$q_ref->param('keyword'))){ $keyword = $$q_ref->param('keyword'); }
+
+	print("<h1>Query database (データベース内から検索)</h1>\n");
+
+	# DBのラベル名一覧を得る
+	my @arr_label = ();	# DBのラベル列挙
+	open(FH, '<'.$str_filepath_datastruct) or sub_error_exit("File (datastruct) open error");
+	while(<FH>){
+		chomp;
+		s/\,\;\"\'//g;
+		if(length($_)>=1){ push(@arr_label, $_); }
+	}
+	close(FH);
+
+	# postパラメータを配列に格納する
+	my @arr_post = ();		# bind用パラメータを格納する配列
+	for(my $i=0; $i<=$#arr_label; $i++){
+		$arr_post[$i] = '%'.sub_conv_to_flagged_utf8(decode_entities($keyword), 'utf8').'%';
+	}
+
+	my $dbh = undef;
+	eval{
+		# SQLサーバに接続
+		$dbh = DBI->connect($str_dsn, "", "", {PrintError => 0, AutoCommit => 1}) or die("DBI open error : ".$DBI::errstr);
+
+		# SQLクエリの実行
+		my $str_sql = "select * from TBL_ADDRBOOK where ";
+		for(my $i=0; $i<=$#arr_label; $i++){
+			$str_sql = $str_sql . $arr_label[$i] . " like ? ";
+			if($i<$#arr_label){ $str_sql .= 'or '; }
+		}
+		my $sth = $dbh->prepare($str_sql) or die("DBI prepare error : ".$DBI::errstr);
+		$sth->execute(@arr_post) or die("DBI execute error : ".$DBI::errstr);
+
+		# 結果を画面表示
+		print("<ul>\n");
+		while(my @arr = $sth->fetchrow_array()){
+			for(my $i=0; $i<=$#arr; $i++){
+				if(defined($arr[$i]) && length($arr[$i])>0){ $arr[$i] = encode_entities(sub_conv_to_flagged_utf8($arr[$i], 'utf8')); }
+			}
+			printf("<li class=\"person\"><a href=\"".$str_this_script."?mode=edit&amp;idx=%d\" class=\"person\">%s</a><span style=\"color:gray;\">&nbsp;",
+					defined($arr[0])?$arr[0]:'0', (defined($arr[1])?$arr[1]:'').' '.(defined($arr[2])?$arr[2]:''));
+			for(my $i=3; $i<=$#arr; $i++){
+				print((defined($arr[$i])?$arr[$i]:'').",");
+			}
+			print("</span></li>\n");
+		}
+		print("</ul>\n");
+
+		$sth->finish();
+		$dbh->disconnect or die(DBI::errstr);
+	};
+	if($@){
+		# evalによるDBエラートラップ：エラー時の処理
+		if(defined($dbh)){ $dbh->disconnect(); }
+		my $str = $@;
+		chomp($str);
+		sub_error_exit($str);
+	}
+
+
 }
 
 # DBをバックアップ
