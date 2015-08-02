@@ -11,6 +11,7 @@
 # version 0.1 (2011/March/16)
 # version 0.2 (2013/November/27)   thunderbird_en, CSVのクオート・区切り文字
 # version 0.3 (2014/January/06)    検索実装
+# version 0.4 (2015/August/02)     vCardエクスポート実装
 #
 # GNU GPL Free Software
 #
@@ -39,6 +40,7 @@ use utf8;
 use lib ((getpwuid($<))[7]).'/local/cpan/lib/perl5';    # ユーザ環境にCPANライブラリを格納している場合
 use lib ((getpwuid($<))[7]).'/local/lib/perl5';         # ユーザ環境にCPANライブラリを格納している場合
 use lib ((getpwuid($<))[7]).'/local/lib/perl5/site_perl/5.8.9/mach';         # ユーザ環境にCPANライブラリを格納している場合
+use lib ((getpwuid($<))[7]).'/local/lib/perl5/amd64-freebsd';         # ユーザ環境にCPANライブラリを格納している場合
 
 use CGI;
 use File::Basename;
@@ -78,6 +80,8 @@ my $str_filepath_datastruct = './datastruct.csv';
 my $str_filepath_datastruct_tb = './datastruct_thunderbird.csv';
 my $str_filepath_datastruct_tben = './datastruct_thunderbird_en.csv';
 my $str_filepath_datastruct_gm = './datastruct_gmail.csv';
+my $str_filepath_datastruct_vcard2 = './datastruct_vcard2.csv';
+my $str_filepath_datastruct_vcard3 = './datastruct_vcard3.csv';
 
 my $str_this_script = basename($0);		# このスクリプト自身のファイル名
 
@@ -101,6 +105,13 @@ if(defined($q->url_param('mode'))){
 		my $flag_csv_quote = 0;
 		if(defined($q->url_param('csv_quote'))){ $flag_csv_quote = 1; }
 		sub_download_csv(\$q, $q->url_param('type'), 'download', $flag_csv_quote, $q->url_param('csv_sep'));
+		exit;
+	}
+
+	if($q->url_param('mode') eq 'download_vcf'){
+		my $flag_add_charset = 0;
+		if(defined($q->url_param('add_charset'))){ $flag_add_charset = 1; }
+		sub_download_vcf(\$q, $q->url_param('type'), $flag_add_charset);
 		exit;
 	}
 }
@@ -141,6 +152,9 @@ if(defined($q->url_param('mode'))){
 	}
 	elsif($q->url_param('mode') eq 'download'){
 		sub_disp_download();
+	}
+	elsif($q->url_param('mode') eq 'download_vcfmenu'){
+		sub_disp_download_vcfmenu();
 	}
 	elsif($q->url_param('mode') eq 'restore_pick'){
 		sub_disp_restore_select();
@@ -210,6 +224,7 @@ _EOT
 		"<li><a href=\"".$str_this_script."?mode=backup\">Backup Database</a></li>\n".
 		"<li><a href=\"".$str_this_script."?mode=upload_pick\">Upload CSV</a></li>\n".
 		"<li><a href=\"".$str_this_script."?mode=download\">Download CSV</a></li>\n".
+		"<li><a href=\"".$str_this_script."?mode=download_vcfmenu\">Download vCard</a></li>\n".
 		"<li><a href=\"".$str_this_script."?mode=restore_pick\">Restore Menu</a></li>\n".
 		"<li><a href=\"".$str_this_script."?mode=logoff\">Logoff</a></li>\n".
 		"</ul>\n".
@@ -231,7 +246,7 @@ print << '_EOT_FOOTER';
 <p>&nbsp;</p> 
 <div class="clear"></div> 
 <div id="footer"> 
-<p><a href="http://oasis.halfmoon.jp/software/">Web-Addrbook</a> version 0.2 &nbsp;&nbsp; GNU GPL free software</p> 
+<p><a href="http://oasis.halfmoon.jp/software/">Web-Addrbook</a> version 0.4 &nbsp;&nbsp; GNU GPL free software</p> 
 </div>	<!-- id="footer" --> 
 _EOT_FOOTER
 
@@ -717,6 +732,20 @@ sub sub_disp_download{
 	print("<p>Thunderbirdには“CSVクオート：有効”、GMailには“CSVクオート：無効”で出力してください</p>\n");
 }
 
+# ダウンロード メニューの表示(vCard)
+sub sub_disp_download_vcfmenu{
+	print("<h1>Download vCard datafile (vCardファイルのダウンロード)</h1>\n");
+	
+	print("<form method=\"get\" action=\"".$str_this_script."\">\n".
+		"<input name=\"mode\" type=\"hidden\" value=\"download_vcf\" />\n".
+		"<input name=\"type\" type=\"radio\" value=\"ver21\" checked=\"checked\" />vCard ver 2.1形式<br />\n".
+		"<input name=\"type\" type=\"radio\" value=\"ver30\" />vCard ver 3.0形式<br />\n".
+		"<input name=\"add_charset\" type=\"checkbox\" value=\"1\" />名前と住所のラベルに ;CHARSET=UTF-8 を付加<br />\n".
+		"<input type=\"submit\" value=\"ダウンロード\" />\n".
+		"</form>\n");
+
+}
+
 # CSVのダウンロード（または、バックアップ）
 sub sub_download_csv{
 	my $q_ref = shift;
@@ -802,6 +831,78 @@ sub sub_download_csv{
 		}
 
 		if($output_mode ne 'download'){ close(FH); }
+
+		$sth->finish();
+		$dbh->disconnect or die(DBI::errstr);
+	};
+	if($@){
+		# evalによるDBエラートラップ：エラー時の処理
+		if(defined($dbh)){ $dbh->disconnect(); }
+		my $str = $@;
+		chomp($str);
+		sub_error_exit($str);
+	}
+}
+
+# vCardのダウンロード
+sub sub_download_vcf{
+	my $q_ref = shift;
+	my $vcf_ver = shift;	# 出力形式（vCard v2 or v3）
+	my $flag_add_charset = shift;	# 名前と住所に「;CHARSET=UTF-8」を付加する場合１
+
+	my @arr_keys;
+	my @arr_label;
+
+	my $str_filepath_datastruct_vcard = $str_filepath_datastruct_vcard2;		# デフォルトはvCard ver2.1形式
+	if($vcf_ver eq 'ver30'){ $str_filepath_datastruct_vcard = $str_filepath_datastruct_vcard3; }
+
+	# ダウンロード用のヘッダを出力
+	print $$q_ref->header(-type=>'application/octet-stream', -attachment=>'addrbook.vcf');
+
+	# sqliteカラム名とThunderbirdカラム名の対応関係の配列を作成
+	open(FH, '<'.$str_filepath_datastruct_vcard) or sub_error_exit("File (datastruct) open error");
+	while(<FH>){
+		chomp;
+		my $str_line = sub_conv_to_flagged_utf8($_);
+		my @arr = split(/\,/, $str_line);
+		if($#arr != 1){ next; }
+		push(@arr_keys, $arr[0]);	# ('name_family','name_given'...)
+		push(@arr_label, $arr[1]);	# ('姓','名',...）
+	}
+	close(FH);
+
+
+	my $dbh = undef;
+	eval{
+		# SQLサーバに接続
+		$dbh = DBI->connect($str_dsn, "", "", {PrintError => 0, AutoCommit => 1}) or die("DBI open error : ".$DBI::errstr);
+
+		# SQL文 "SELECT 'name_family','name_given' FROM TBL_ADDRBOOK"
+		my $str_sql = "select ";
+		for(my $i=0; $i<=$#arr_keys; $i++){
+			$str_sql .= $arr_keys[$i].",";
+		}
+		$str_sql = substr($str_sql, 0, length($str_sql)-1);		# 末尾の "," を除去
+		$str_sql .= " from TBL_ADDRBOOK";
+
+		my $sth = $dbh->prepare($str_sql) or die($DBI::errstr);
+		$sth->execute() or die($DBI::errstr);
+
+		# vCard出力開始
+		while(my @arr = $sth->fetchrow_array()){
+			print("BEGIN:VCARD\n");
+			if($vcf_ver eq 'ver30'){ print("VERSION:3.0\n"); }
+			else { print("VERSION:2.1\n"); }
+			for(my $i=0; $i<=$#arr; $i++){
+#				if(defined($arr[$i]) && length($arr[$i])>0){ $arr[$i] = sub_conv_to_flagged_utf8($arr[$i], 'utf8'); }
+				if(defined($arr[$i]) && length($arr[$i])>0){ 
+					printf("%s%s:%s\n", $arr_label[$i], $flag_add_charset == 1 ? ';CHARSET=UTF-8' : '', sub_conv_to_flagged_utf8($arr[$i], 'utf8'));
+				}
+			}
+			print("END:VCARD\n\n");
+#			$csv->combine(@arr);
+#			print($csv->string()."\n");
+		}
 
 		$sth->finish();
 		$dbh->disconnect or die(DBI::errstr);

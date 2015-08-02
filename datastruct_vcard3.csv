@@ -1,0 +1,9 @@
+name_print,N
+name_print,FN
+email_1,EMAIL;TYPE=INTERNET
+email_2,EMAIL;TYPE=INTERNET
+tel_home,TEL;TYPE=HOME
+tel_mobile,TEL;TYPE=CELL
+tel_fax,TEL;TYPE=FAX
+tel_work,TEL;TYPE=WORK
+addr_pref||' '||addr_city||' '||addr_street_1||' '||addr_street_2,ADR;TYPE=HOME
