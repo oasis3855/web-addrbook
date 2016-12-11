@@ -12,6 +12,7 @@
 # version 0.2 (2013/November/27)   thunderbird_en, CSVのクオート・区切り文字
 # version 0.3 (2014/January/06)    検索実装
 # version 0.4 (2015/August/02)     vCardエクスポート実装
+# version 0.5 (2016/December/11)   vCardインポート実装
 #
 # GNU GPL Free Software
 #
@@ -51,6 +52,8 @@ use Data::Dumper;
 use Encode::Guess qw/euc-jp shiftjis iso-2022-jp/;	# 必要ないエンコードは削除すること
 use HTML::Entities;
 use DBD::SQLite;	# SQLiteバージョンを出すためのみに使用
+use vCard;
+#use vCard::AddressBooks;	# vCard読み込み用
 
 require ((getpwuid($<))[7]).'/auth/script/auth_md5_utf8.pl';	# 認証システム
 
@@ -82,6 +85,7 @@ my $str_filepath_datastruct_tben = './datastruct_thunderbird_en.csv';
 my $str_filepath_datastruct_gm = './datastruct_gmail.csv';
 my $str_filepath_datastruct_vcard2 = './datastruct_vcard2.csv';
 my $str_filepath_datastruct_vcard3 = './datastruct_vcard3.csv';
+my $str_filepath_datastruct_vcardimport = './datastruct_vcard_import.csv';
 
 my $str_this_script = basename($0);		# このスクリプト自身のファイル名
 
@@ -110,8 +114,10 @@ if(defined($q->url_param('mode'))){
 
 	if($q->url_param('mode') eq 'download_vcf'){
 		my $flag_add_charset = 0;
+		my $onerecord_idx = 0;
 		if(defined($q->url_param('add_charset'))){ $flag_add_charset = 1; }
-		sub_download_vcf(\$q, $q->url_param('type'), $flag_add_charset);
+		if(defined($q->param('vcf_onerecord'))){ $onerecord_idx = $q->param('vcf_onerecord')+0; }
+		sub_download_vcf(\$q, $q->url_param('type'), $flag_add_charset, $onerecord_idx);
 		exit;
 	}
 }
@@ -156,6 +162,9 @@ if(defined($q->url_param('mode'))){
 	elsif($q->url_param('mode') eq 'download_vcfmenu'){
 		sub_disp_download_vcfmenu();
 	}
+	elsif($q->url_param('mode') eq 'import_vcfmenu'){
+		sub_disp_import_vcfmenu();
+	}
 	elsif($q->url_param('mode') eq 'restore_pick'){
 		sub_disp_restore_select();
 	}
@@ -175,6 +184,9 @@ elsif(defined($q->param('uploadfile')) && length($q->param('uploadfile'))>0){
 		$flag_purge_data = 1;
 	}
 	sub_upload_csv(\$q, $flag_purge_data);
+}
+elsif(defined($q->param('importvcf')) && length($q->param('importvcf'))>0){
+	sub_import_vcf(\$q);
 }
 else{
 	sub_disp_home();
@@ -221,11 +233,12 @@ _EOT
 		"<li><a href=\"".$str_this_script."?mode=list\">List Database</a></li>\n".
 		"<li><a href=\"".$str_this_script."?mode=query_input\">Query Database</a></li>\n".
 		"<li><a href=\"".$str_this_script."?mode=add\">Add one entry</a></li>\n".
-		"<li><a href=\"".$str_this_script."?mode=backup\">Backup Database</a></li>\n".
-		"<li><a href=\"".$str_this_script."?mode=upload_pick\">Upload CSV</a></li>\n".
 		"<li><a href=\"".$str_this_script."?mode=download\">Download CSV</a></li>\n".
+		"<li><a href=\"".$str_this_script."?mode=upload_pick\">Upload CSV</a></li>\n".
 		"<li><a href=\"".$str_this_script."?mode=download_vcfmenu\">Download vCard</a></li>\n".
-		"<li><a href=\"".$str_this_script."?mode=restore_pick\">Restore Menu</a></li>\n".
+		"<li><a href=\"".$str_this_script."?mode=import_vcfmenu\">Import vCard</a></li>\n".
+		"<li><a href=\"".$str_this_script."?mode=backup\">Backup Database</a></li>\n".
+		"<li><a href=\"".$str_this_script."?mode=restore_pick\">Restore Database</a></li>\n".
 		"<li><a href=\"".$str_this_script."?mode=logoff\">Logoff</a></li>\n".
 		"</ul>\n".
 		"</div>	<!-- id=\"main_content_left\" -->\n");
@@ -246,7 +259,7 @@ print << '_EOT_FOOTER';
 <p>&nbsp;</p> 
 <div class="clear"></div> 
 <div id="footer"> 
-<p><a href="http://oasis.halfmoon.jp/software/">Web-Addrbook</a> version 0.4 &nbsp;&nbsp; GNU GPL free software</p> 
+<p><a href="http://oasis.halfmoon.jp/software/">Web-Addrbook</a> version 0.5 &nbsp;&nbsp; GNU GPL free software</p> 
 </div>	<!-- id="footer" --> 
 _EOT_FOOTER
 
@@ -746,6 +759,203 @@ sub sub_disp_download_vcfmenu{
 
 }
 
+# インポート メニューの表示(vCard)
+sub sub_disp_import_vcfmenu{
+	print("<h1>Import vCard datafile (vCardファイルのインポート)</h1>\n".
+		"<p>vCard形式アドレス帳からデータを Databaseに追加取り込みします</p>\n".
+		"<p>&nbsp;</p>\n".
+		"<form method=\"post\" action=\"$str_this_script\" enctype=\"multipart/form-data\">\n".
+		"vCardファイル\n".
+		"<p><input type=\"file\" name=\"importvcf\" value=\"\" size=\"20\" />\n".
+		"<input type=\"submit\" value=\"アップロード\" /></p>\n".
+		"</form>\n");
+}
+
+# vCardファイルをインポート
+sub sub_import_vcf{
+	my $q_ref = shift;
+
+	my %hash_coord;
+
+	# sqliteカラム名とvCard項目の対応関係のハッシュを作成
+	open(FH, '<'.$str_filepath_datastruct_vcardimport) or sub_error_exit("File (datastruct_tb) open error");
+	while(<FH>){
+		chomp;
+		my $str_line = sub_conv_to_flagged_utf8($_);
+		my @arr = split(/\,/, $str_line);
+		if($#arr != 1){ next; }
+		$hash_coord{$arr[1]} = $arr[0];		# 例 $hash{'given_names'} = 'name_given'(sqliteカラム名)
+	}
+	close(FH);
+
+	print("<h1>Import vCard datafile (vCardファイルのインポート)</h1>\n".
+		"<p>アップロードファイルを一時保存中 ...</p>\n");
+	my $str_filename = $$q_ref->param('importvcf');
+	print("<p>アップロードされたファイル = ".$str_filename."</p>\n");
+
+	my $fh = $$q_ref->upload('importvcf');
+	my $str_temp_filepath = $$q_ref->tmpFileName($fh);
+
+	print("<p>ファイルアップロード処理中 ...(".$str_temp_filepath.")</p>\n");
+
+	File::Copy::move($str_temp_filepath, $str_filepath_csv_tmp) or sub_error_exit("Error : 一時ファイル ".$str_filepath_csv_tmp." の移動処理失敗");
+
+	close($fh);
+
+	unless( -f $str_filepath_csv_tmp ){ sub_error_exit("Error : 一時ファイル ".$str_filepath_csv_tmp." の存在が検知できない"); }
+
+	# 入力ファイルの文字エンコードを得る（ファイル全体からエンコード形式を推測する）
+	my $enc = sub_get_encode_of_file($str_filepath_csv_tmp);
+	my $enc_str;
+	if(ref($enc) eq 'Encode::utf8'){ $enc_str = 'utf8'; }
+	elsif(ref($enc) eq 'Encode::Unicode'){ $enc_str = $$enc{'Name'}; }
+	elsif(ref($enc) eq 'Encode::XS'){ $enc_str = $enc->mime_name(); }
+	elsif(ref($enc) eq 'Encode::JP::JIS7'){ $enc_str = $$enc{'Name'}; }
+	else { $enc_str = ''; }
+
+	# vCardファイルを読み込んで、1行ずつ画面表示
+	#open(FH_IN, '<'.$str_filepath_csv_tmp) or sub_error_exit("Error : 一時ファイルを開くことができません");
+	#while(<FH_IN>) {
+		#print "<p>".encode_entities(sub_conv_to_flagged_utf8($_, $enc))."</p>\n";
+	#}
+	#close(FH_IN);
+
+	# vCardファイルを解析
+	# 直接 vCardファイルを読み込む（行末記号LFはエラーとなる）
+#	my $address_book = vCard::AddressBook->new(encoding_in=>$enc_str);
+#	$address_book->load_file($str_filepath_csv_tmp);
+	# 一旦文字列にファイルを読み込んで、改行コードをCR+LFに変換する場合
+	my $address_book = vCard::AddressBook->new(encoding_in=>'utf8');
+	my $tmp_str = "";
+	open(my $FH, "<".$str_filepath_csv_tmp) or die("vCard file open error : ".$str_filepath_csv_tmp);
+	while (<$FH>){
+		my $str_line = $_;
+		$tmp_str = $tmp_str . sub_conv_to_flagged_utf8($str_line, $enc) . "\r\n";
+	}
+	close($FH);
+	$address_book->load_string($tmp_str);
+	###
+
+	my $dbh = undef;
+	eval{
+		# SQLサーバに接続
+		$dbh = DBI->connect($str_dsn, "", "", {PrintError => 0, AutoCommit => 1}) or die("DBI open error : ".$DBI::errstr);
+		# DBへ新規登録数
+		my $n_count = 0;
+		# vCardよりデータを1件ずつ取り出す
+		foreach my $vcard (@{ $address_book->vcards() }) {
+			# vCardデータを一旦、変数に入力する
+			my $family_names = '';
+			my $given_names = '';
+			my $full_name = '';
+			if(defined($vcard->family_names()->[0])){ $family_names = $vcard->family_names()->[0]; }
+			if(defined($vcard->given_names()->[0])){ $given_names = $vcard->given_names()->[0]; }
+			if(defined($vcard->full_name())){ $full_name = $vcard->full_name(); }
+
+			my $email_1 = '';
+			my $email_2 = '';
+			foreach my $email ( @{$vcard->email_addresses} ){
+				if(defined($email->{address})){
+					if(!length($email_1)){ $email_1 = $email->{address}; }
+					elsif(!length($email_2)){ $email_2 = $email->{address}; }
+				}
+			}
+
+			my $phone_home = '';
+			my $phone_cell = '';
+			my $phone_work = '';
+			foreach my $phone ( @{$vcard->phones} ){
+				 if($phone->{type}[0] =~ /home/i){ $phone_home = $phone->{number}; }
+				 elsif($phone->{type}[0] =~ /cell/i){ $phone_cell = $phone->{number}; }
+				 elsif($phone->{type}[0] =~ /work/i){ $phone_work = $phone->{number}; }
+				 else{
+					if(!length($phone_home)){ $phone_home = $phone->{number}; }
+					elsif(!length($phone_cell)){ $phone_cell = $phone->{number}; }
+					elsif(!length($phone_work)){ $phone_work = $phone->{number}; }
+				 }
+			}
+
+			my $address_country = '';
+			my $address_post_code = '';
+			my $address_region = '';
+			my $address_city = '';
+			my $address_street = '';
+			my $address_po_box = '';
+			foreach my $address ( @{$vcard->addresses} ){
+				if(defined($address->{country})){ $address_country = $address->{country}; }
+				if(defined($address->{post_code})){ $address_post_code = $address->{post_code}; }
+				if(defined($address->{region})){ $address_region = $address->{region}; }
+				if(defined($address->{city})){ $address_city = $address->{city}; }
+				if(defined($address->{street})){ $address_street = $address->{street}; }
+				if(defined($address->{po_box})){ $address_po_box = $address->{po_box}; }
+				print "\n";
+			}
+			
+			my $bday = '';
+			my @bday_array = ('', '', '');
+			if(defined($vcard->birthday())) { $bday = $vcard->birthday(); }
+			if(length($bday)){
+				@bday_array = split(/-/, $bday);
+			}
+
+			# 画面出力
+			print("<p>姓名=" . $family_names . "," . $given_names . ", 表示名=" . $full_name . "<br/>\n" .
+					"email_1=" . $email_1 . ", email_2=" . $email_2 . "<br/>\n" .
+					"tel_home=" . $phone_home . ", tel_cell=" . $phone_cell . ",tel_work=" . $phone_work . "<br/>\n" .
+					"住所=" . $address_country . "," . $address_post_code . "," . $address_region . "," .
+					$address_city . "," . $address_street . "," . $address_po_box . "<br/>\n" .
+					"誕生日=" . $bday_array[0] . "/" . $bday_array[1] . "/" . $bday_array[2] . "<br/>\n" .
+					"========</p>\n");
+
+			# SQL文の構築（プレースホルダーを用いて、不正な文字はexecuteでエスケープされるようにする）
+			my $str_sql = "INSERT INTO TBL_ADDRBOOK (" .
+				$hash_coord{'family_names'} . "," . $hash_coord{'given_names'} . "," . $hash_coord{'full_name'} . "," .
+				$hash_coord{'email_1'} . "," . $hash_coord{'email_2'} . "," .
+				$hash_coord{'phone_home'} . "," . $hash_coord{'phone_cell'} . "," . $hash_coord{'phone_work'} . "," .
+				$hash_coord{'address_country'} . "," . $hash_coord{'address_post_code'} . "," . $hash_coord{'address_region'} . "," . 
+				$hash_coord{'address_city'} . "," . $hash_coord{'address_street'} . "," . $hash_coord{'address_po_box'} . "," .
+				$hash_coord{'bday_year'} . "," . $hash_coord{'bday_month'} . "," . $hash_coord{'bday_day'} . ")" .
+				" VALUES (" .
+				"?,?,?," .			# name
+				"?,?," .			# email
+				"?,?,?," .			# phone
+				"?,?,?," .			# address
+				"?,?,?," .			# address
+				"?,?,?)";			# birthday
+			my $sth = $dbh->prepare($str_sql) or die(DBI::errstr);
+
+			# DBに登録
+			$sth->execute($family_names, $given_names, $full_name,
+						$email_1, $email_2,
+						$phone_home, $phone_cell, $phone_work,
+						$address_country, $address_post_code, $address_region,
+						$address_city, $address_street, $address_po_box,
+						$bday_array[0], $bday_array[1], $bday_array[2]
+			) or die(DBI::errstr);
+			$sth->finish();
+			$n_count++;
+		}
+
+		$dbh->disconnect or die(DBI::errstr);
+
+		print("<p class=\"info\">".$n_count." 件のデータを登録しました</p>\n");
+	};
+	if($@){
+		# evalによるDBエラートラップ：エラー時の処理
+		if(defined($dbh)){ $dbh->disconnect(); }
+		my $str = $@;
+		chomp($str);
+		sub_error_exit($str);
+	}
+
+
+	
+	unlink($str_filepath_csv_tmp);
+
+	print "<p class=\"ok\">データの取り込み完了</p>\n";
+	
+}
+
 # CSVのダウンロード（または、バックアップ）
 sub sub_download_csv{
 	my $q_ref = shift;
@@ -849,6 +1059,7 @@ sub sub_download_vcf{
 	my $q_ref = shift;
 	my $vcf_ver = shift;	# 出力形式（vCard v2 or v3）
 	my $flag_add_charset = shift;	# 名前と住所に「;CHARSET=UTF-8」を付加する場合１
+	my $onerecord_idx = shift;		# 特定レコード1件のみのvCardファイルを作成する場合は0以外の値
 
 	my @arr_keys;
 	my @arr_label;
@@ -883,23 +1094,25 @@ sub sub_download_vcf{
 			$str_sql .= $arr_keys[$i].",";
 		}
 		$str_sql = substr($str_sql, 0, length($str_sql)-1);		# 末尾の "," を除去
-		$str_sql .= " from TBL_ADDRBOOK";
+		if($onerecord_idx != 0){ $str_sql .= " from TBL_ADDRBOOK where idx = ?"; }
+		else { $str_sql .= " from TBL_ADDRBOOK"; }
 
 		my $sth = $dbh->prepare($str_sql) or die($DBI::errstr);
-		$sth->execute() or die($DBI::errstr);
+		if($onerecord_idx != 0){ $sth->execute($onerecord_idx) or die($DBI::errstr); }
+		else { $sth->execute() or die($DBI::errstr); }
 
 		# vCard出力開始
 		while(my @arr = $sth->fetchrow_array()){
-			print("BEGIN:VCARD\n");
-			if($vcf_ver eq 'ver30'){ print("VERSION:3.0\n"); }
-			else { print("VERSION:2.1\n"); }
+			print("BEGIN:VCARD\r\n");
+			if($vcf_ver eq 'ver30'){ print("VERSION:3.0\r\n"); }
+			else { print("VERSION:2.1\r\n"); }
 			for(my $i=0; $i<=$#arr; $i++){
 #				if(defined($arr[$i]) && length($arr[$i])>0){ $arr[$i] = sub_conv_to_flagged_utf8($arr[$i], 'utf8'); }
 				if(defined($arr[$i]) && length($arr[$i])>0){ 
-					printf("%s%s:%s\n", $arr_label[$i], $flag_add_charset == 1 ? ';CHARSET=UTF-8' : '', sub_conv_to_flagged_utf8($arr[$i], 'utf8'));
+					printf("%s%s:%s\r\n", $arr_label[$i], $flag_add_charset == 1 ? ';CHARSET=UTF-8' : '', sub_conv_to_flagged_utf8($arr[$i], 'utf8'));
 				}
 			}
-			print("END:VCARD\n\n");
+			print("END:VCARD\r\n\r\n");
 #			$csv->combine(@arr);
 #			print($csv->string()."\n");
 		}
@@ -1034,6 +1247,39 @@ sub sub_edit_db{
 			
 			return;
 		}
+		# データ１件削除確認メニュー表示
+		elsif(defined($$q_ref->param('delete_confirm'))){
+			print("<p>1件のデータ (idx=".$idx.") の削除確認</p>\n");
+			# TBL_ADDRBOOKのidx=$idxデータを変更する
+			my $str_sql = "select idx,".join(',',@arr_label)." from TBL_ADDRBOOK where idx=?";
+			my $sth = $dbh->prepare($str_sql) or die("DBI prepare error : ".$DBI::errstr);
+			$sth->execute($idx) or die("DBI execute error : ".$DBI::errstr);
+			my @arr = $sth->fetchrow_array();
+			print("<p>\n");
+			for(my $i=0; $i<=$#arr_label; $i++){
+				print($hash_coord{$arr_label[$i]}."=".encode_entities(sub_conv_to_flagged_utf8($arr[$i+1], 'utf8'))."<br/>\n");
+			}
+			print("</p>\n");
+			$sth->finish();
+			print("<form method=\"post\" action=\"".$str_this_script."?mode=edit&amp;idx=".$idx."\" name=\"form1\">\n".
+				"<input name=\"idx\" type=\"text\" size=\"10\" value=\"".$arr[0]."\" readonly=\"readonly\" />（変更不可）<br/>\n".
+				"<input type=\"submit\" name=\"delete\" value=\"このデータを削除\" />\n".
+				"</form>\n");
+			return;
+		}
+		# データ１件vCard出力メニュー表示
+		elsif(defined($$q_ref->param('vcf_download_onerecord'))){
+			print("<p>1件のデータ (idx=".$idx.") のvCardをダウンロード...</p>\n");
+			print("<form method=\"get\" action=\"".$str_this_script."\">\n".
+				"<input name=\"mode\" type=\"hidden\" value=\"download_vcf\" />\n".
+				"<input name=\"vcf_onerecord\" type=\"hidden\" value=\"".$idx."\" />\n".
+				"<input name=\"type\" type=\"radio\" value=\"ver21\" checked=\"checked\" />vCard ver 2.1形式<br />\n".
+				"<input name=\"type\" type=\"radio\" value=\"ver30\" />vCard ver 3.0形式<br />\n".
+				"<input name=\"add_charset\" type=\"checkbox\" value=\"1\" />名前と住所のラベルに ;CHARSET=UTF-8 を付加<br />\n".
+				"<input type=\"submit\" value=\"ダウンロード\" />\n".
+				"</form>\n");
+			return;
+		}
 
 		# TBL_ADDRBOOK のデータ書き換え（UPDATE命令）
 		if($flag_post_detect == 1){
@@ -1070,7 +1316,9 @@ sub sub_edit_db{
 				print(" <tr><td>".$hash_coord{$arr_label[$i]}."</td><td><input name=\"".$arr_label[$i]."\" type=\"text\" size=\"50\" value=\"".encode_entities(sub_conv_to_flagged_utf8($arr[$i+1], 'utf8'))."\" /></td></tr>\n");
 			}
 			print("</table>\n".
-					"<p><input type=\"submit\" value=\"データ更新\" />&nbsp;<input type=\"submit\" name=\"delete\" value=\"このデータを削除\" /></p>\n".
+					"<p><input type=\"submit\" name=\"vcf_download_onerecord\" value=\"vCardダウンロード\" />&nbsp;" .
+					"<input type=\"submit\" value=\"データ更新\" />&nbsp;" .
+					"<input type=\"submit\" name=\"delete_confirm\" value=\"このデータを削除\" /></p>\n".
 					"</form>\n");
 
 		}

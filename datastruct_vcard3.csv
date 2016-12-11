@@ -1,9 +1,12 @@
-name_print,N
 name_print,FN
+name_family||';'||name_given||';;',N
 email_1,EMAIL;TYPE=INTERNET
 email_2,EMAIL;TYPE=INTERNET
 tel_home,TEL;TYPE=HOME
 tel_mobile,TEL;TYPE=CELL
 tel_fax,TEL;TYPE=FAX
 tel_work,TEL;TYPE=WORK
-addr_pref||' '||addr_city||' '||addr_street_1||' '||addr_street_2,ADR;TYPE=HOME
+addr_street_2||';;'||addr_street_1||';'||addr_city||';'||addr_pref||';'||addr_zip||';'||addr_country,ADR;TYPE=HOME
+birthday_year||'-'||birthday_month||'-'||birthday_day,BDAY
+memo,NOTE
+
